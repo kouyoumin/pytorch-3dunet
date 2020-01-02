@@ -1,5 +1,6 @@
 import collections
 import importlib
+import os
 
 import h5py
 import numpy as np
@@ -50,27 +51,34 @@ class SliceBuilder:
             [(slice, slice, slice), ...] if len(shape) == 3
         """
         slices = []
-        if dataset.ndim == 4:
+        if dataset.ndim == 5:
+            num_volumes, in_channels, i_z, i_y, i_x = dataset.shape
+        elif dataset.ndim == 4:
+            num_volumes = 1
             in_channels, i_z, i_y, i_x = dataset.shape
         else:
+            num_volumes = 1
             i_z, i_y, i_x = dataset.shape
 
         k_z, k_y, k_x = patch_shape
         s_z, s_y, s_x = stride_shape
         z_steps = SliceBuilder._gen_indices(i_z, k_z, s_z)
-        for z in z_steps:
-            y_steps = SliceBuilder._gen_indices(i_y, k_y, s_y)
-            for y in y_steps:
-                x_steps = SliceBuilder._gen_indices(i_x, k_x, s_x)
-                for x in x_steps:
-                    slice_idx = (
-                        slice(z, z + k_z),
-                        slice(y, y + k_y),
-                        slice(x, x + k_x)
-                    )
-                    if dataset.ndim == 4:
-                        slice_idx = (slice(0, in_channels),) + slice_idx
-                    slices.append(slice_idx)
+        for idx in range(num_volumes):
+            for z in z_steps:
+                y_steps = SliceBuilder._gen_indices(i_y, k_y, s_y)
+                for y in y_steps:
+                    x_steps = SliceBuilder._gen_indices(i_x, k_x, s_x)
+                    for x in x_steps:
+                        slice_idx = (
+                            slice(z, z + k_z),
+                            slice(y, y + k_y),
+                            slice(x, x + k_x)
+                        )
+                        if dataset.ndim == 5:
+                            slice_idx = (slice(idx, idx+1),slice(0, in_channels),) + slice_idx
+                        if dataset.ndim == 4:
+                            slice_idx = (slice(0, in_channels),) + slice_idx
+                        slices.append(slice_idx)
         return slices
 
     @staticmethod
@@ -80,6 +88,67 @@ class SliceBuilder:
             yield j
         if j + k < i:
             yield i - k
+
+
+class SingleSliceBuilder:
+    def __init__(self, raw_datasets, label_datasets, weight_dataset, patch_shape, stride_shape):
+        self._raw_slices = self._build_slices(raw_datasets[0], patch_shape, stride_shape)
+        if label_datasets is None:
+            self._label_slices = None
+        else:
+            # take the first element in the label_datasets to build slices
+            self._label_slices = self._build_slices(label_datasets[0], patch_shape, stride_shape)
+            assert len(self._raw_slices) == len(self._label_slices)
+        if weight_dataset is None:
+            self._weight_slices = None
+        else:
+            self._weight_slices = self._build_slices(weight_dataset[0], patch_shape, stride_shape)
+            assert len(self.raw_slices) == len(self._weight_slices)
+
+    @property
+    def raw_slices(self):
+        return self._raw_slices
+
+    @property
+    def label_slices(self):
+        return self._label_slices
+
+    @property
+    def weight_slices(self):
+        return self._weight_slices
+
+    @staticmethod
+    def _build_slices(dataset, patch_shape, stride_shape):
+        """Iterates over a given n-dim dataset patch-by-patch with a given stride
+        and builds an array of slice positions.
+
+        Returns:
+            list of slices, i.e.
+            [(slice, slice, slice, slice), ...] if len(shape) == 4
+            [(slice, slice, slice), ...] if len(shape) == 3
+        """
+        slices = []
+        if dataset.ndim == 5:
+            num_volumes, in_channels, i_z, i_y, i_x = dataset.shape
+        elif dataset.ndim == 4:
+            num_volumes = 1
+            in_channels, i_z, i_y, i_x = dataset.shape
+        else:
+            num_volumes = 1
+            i_z, i_y, i_x = dataset.shape
+
+        for idx in range(num_volumes):
+            slice_idx = (
+                slice(0, None),
+                slice(0, None),
+                slice(0, None)
+            )
+            if dataset.ndim == 5:
+                slice_idx = (slice(idx, idx+1),slice(0, in_channels),) + slice_idx
+            if dataset.ndim == 4:
+                slice_idx = (slice(0, in_channels),) + slice_idx
+            slices.append(slice_idx)
+        return slices
 
 
 class FilterSliceBuilder(SliceBuilder):
@@ -192,7 +261,7 @@ class HDF5Dataset(Dataset):
     def __init__(self, file_path, patch_shape, stride_shape, phase, transformer_config,
                  raw_internal_path='raw', label_internal_path='label',
                  weight_internal_path=None, slice_builder_cls=SliceBuilder,
-                 mirror_padding=False, pad_width=20):
+                 mirror_padding=False, pad_width=20, ext_mean=None, ext_std=None):
         """
         :param file_path: path to H5 file containing raw data as well as labels and per pixel weights (optional)
         :param patch_shape: the shape of the patch DxHxW
@@ -231,6 +300,10 @@ class HDF5Dataset(Dataset):
             self.raws = [input_file[internal_path][...] for internal_path in raw_internal_path]
             # calculate global min, max, mean and std for normalization
             min_value, max_value, mean, std = self._calculate_stats(self.raws)
+            if ext_mean:
+                mean = ext_mean
+            if ext_std:
+                std = ext_std
             logger.info(f'Input stats: min={min_value}, max={max_value}, mean={mean}, std={std}')
 
             self.transformer = transforms.get_transformer(transformer_config, min_value=min_value, max_value=max_value,
@@ -373,7 +446,11 @@ def get_train_loaders(config):
 
     # get train and validation files
     train_paths = loaders_config['train_path']
+    if len(train_paths) == 1 and os.path.isdir(train_paths[0]):
+        train_paths = [os.path.join(train_paths[0], file) for file in os.listdir(train_paths[0]) if file.endswith('h5')]
     val_paths = loaders_config['val_path']
+    if len(val_paths) == 1 and os.path.isdir(val_paths[0]):
+        val_paths = [os.path.join(val_paths[0], file) for file in os.listdir(val_paths[0]) if file.endswith('h5')]
     assert isinstance(train_paths, list)
     assert isinstance(val_paths, list)
     # get h5 internal paths for raw and label
@@ -420,20 +497,22 @@ def get_train_loaders(config):
                                       raw_internal_path=raw_internal_path,
                                       label_internal_path=label_internal_path,
                                       weight_internal_path=weight_internal_path,
-                                      slice_builder_cls=val_slice_builder)
+                                      slice_builder_cls=val_slice_builder,
+                                      ext_mean=train_datasets[0].transformer.config_base['mean'],
+                                      ext_std=train_datasets[0].transformer.config_base['std'])
             val_datasets.append(val_dataset)
         except Exception:
             logger.info(f'Skipping validation set: {val_path}', exc_info=True)
 
     num_workers = loaders_config.get('num_workers', 1)
     logger.info(f'Number of workers for train/val dataloader: {num_workers}')
-    batch_size = loaders_config.get('batch_size', 1)
+    batch_size = loaders_config.get('batch_size', 4)
     logger.info(f'Batch size for train/val loader: {batch_size}')
     # when training with volumetric data use batch_size of 1 due to GPU memory constraints
     return {
         'train': DataLoader(ConcatDataset(train_datasets), batch_size=batch_size, shuffle=True,
                             num_workers=num_workers),
-        'val': DataLoader(ConcatDataset(val_datasets), batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        'val': DataLoader(ConcatDataset(val_datasets), batch_size=1, shuffle=True, num_workers=num_workers)
     }
 
 

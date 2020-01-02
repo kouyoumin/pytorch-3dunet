@@ -42,7 +42,7 @@ class UNet3D(nn.Module):
 
         if isinstance(f_maps, int):
             # use 4 levels in the encoder path as suggested in the paper
-            f_maps = create_feature_maps(f_maps, number_of_fmaps=4)
+            f_maps = create_feature_maps(f_maps, number_of_fmaps=5)
 
         # create encoder path consisting of Encoder modules. The length of the encoder is equal to `len(f_maps)`
         # uses DoubleConv as a basic_module for the Encoder

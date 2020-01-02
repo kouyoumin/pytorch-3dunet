@@ -306,6 +306,7 @@ def get_loss_criterion(config):
 
     ignore_index = loss_config.get('ignore_index', None)
     weight = loss_config.get('weight', None)
+    pos_weight = loss_config.get('pos_weight', None)
 
     if weight is not None:
         # convert to cuda tensor if necessary
@@ -314,7 +315,7 @@ def get_loss_criterion(config):
     if name == 'BCEWithLogitsLoss':
         skip_last_target = loss_config.get('skip_last_target', False)
         if ignore_index is None and not skip_last_target:
-            return nn.BCEWithLogitsLoss()
+            return nn.BCEWithLogitsLoss(pos_weight=torch.Tensor(pos_weight).cuda())
         else:
             return BCELossWrapper(nn.BCEWithLogitsLoss(), ignore_index=ignore_index, skip_last_target=skip_last_target)
     elif name == 'CrossEntropyLoss':

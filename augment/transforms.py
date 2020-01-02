@@ -88,6 +88,7 @@ class RandomRotate:
     def __call__(self, m):
         axis = self.axes[self.random_state.randint(len(self.axes))]
         angle = self.random_state.randint(-self.angle_spectrum, self.angle_spectrum)
+        #print(angle)
 
         if m.ndim == 3:
             m = rotate(m, angle, axes=axis, reshape=False, order=self.order, mode=self.mode, cval=-1)
@@ -104,7 +105,7 @@ class RandomContrast:
         Adjust contrast by scaling each voxel to `mean + alpha * (v - mean)`.
     """
 
-    def __init__(self, random_state, alpha=(0.5, 1.5), mean=0.0, execution_probability=0.1, **kwargs):
+    def __init__(self, random_state, alpha=(0.8, 1.25), mean=0.0, execution_probability=0.1, **kwargs):
         self.random_state = random_state
         assert len(alpha) == 2
         self.alpha = alpha
@@ -115,7 +116,7 @@ class RandomContrast:
         if self.random_state.uniform() < self.execution_probability:
             alpha = self.random_state.uniform(self.alpha[0], self.alpha[1])
             result = self.mean + alpha * (m - self.mean)
-            return np.clip(result, -1, 1)
+            return result#np.clip(result, -1, 1)
 
         return m
 

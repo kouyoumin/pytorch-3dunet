@@ -40,6 +40,13 @@ def save_checkpoint(state, is_best, checkpoint_dir, logger=None):
 
     last_file_path = os.path.join(checkpoint_dir, 'last_checkpoint.pytorch')
     log_info(f"Saving last checkpoint to '{last_file_path}'")
+    
+    keys = list(state['model_state_dict'].keys())
+    for key in keys:
+        if key.startswith('module.'):
+            state['model_state_dict'][key[7:]] = state['model_state_dict'][key]
+            del state['model_state_dict'][key]
+
     torch.save(state, last_file_path)
     if is_best:
         best_file_path = os.path.join(checkpoint_dir, 'best_checkpoint.pytorch')
@@ -64,6 +71,12 @@ def load_checkpoint(checkpoint_path, model, optimizer=None):
         raise IOError(f"Checkpoint '{checkpoint_path}' does not exist")
 
     state = torch.load(checkpoint_path)
+    keys = list(state['model_state_dict'].keys())
+    for key in keys:
+        if key.startswith('module.'):
+            state['model_state_dict'][key[7:]] = state['model_state_dict'][key]
+            del state['model_state_dict'][key]
+
     model.load_state_dict(state['model_state_dict'])
 
     if optimizer is not None:
@@ -428,7 +441,7 @@ def expand_as_one_hot(input, C, ignore_index=None):
         return torch.zeros(shape).to(input.device).scatter_(1, input, 1)
 
 
-def plot_segm(segm, ground_truth, plots_dir='.'):
+def plot_segm(segm, ground_truth, plots_dir='plot'):
     """
     Saves predicted and ground truth segmentation into a PNG files (one per channel).
 

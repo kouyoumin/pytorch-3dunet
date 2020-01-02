@@ -60,6 +60,7 @@ class MeanIoU:
         assert input.dim() == 5
 
         n_classes = input.size()[1]
+        #print('n_classes', n_classes)
 
         if target.dim() == 4:
             target = expand_as_one_hot(target, C=n_classes, ignore_index=self.ignore_index)
@@ -78,7 +79,7 @@ class MeanIoU:
 
             # convert to uint8 just in case
             binary_prediction = binary_prediction.byte()
-            _target = _target.byte()
+            _target = (_target > 0.5).byte()
 
             per_channel_iou = []
             for c in range(n_classes):
@@ -98,13 +99,14 @@ class MeanIoU:
         Puts 1 for the class/channel with the highest probability and 0 in other channels. Returns byte tensor of the
         same size as the input tensor.
         """
-        if n_classes == 1:
+        #if n_classes == 1:
+        if True:
             # for single channel input just threshold the probability map
             result = input > 0.5
-            return result.long()
+            return result.byte()
 
-        _, max_index = torch.max(input, dim=0, keepdim=True)
-        return torch.zeros_like(input, dtype=torch.uint8).scatter_(0, max_index, 1)
+        #_, max_index = torch.max(input, dim=0, keepdim=True)
+        #return torch.zeros_like(input, dtype=torch.uint8).scatter_(0, max_index, 1)
 
     def _jaccard_index(self, prediction, target):
         """

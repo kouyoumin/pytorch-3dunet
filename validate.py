@@ -112,6 +112,7 @@ def main():
             nn.init.constant_(m.bias, 0)
     # put the model on GPUs
     logger.info(f"Sending the model to '{config['device']}'")
+    #model = torch.nn.DataParallel(model).cuda()
     model = model.to(config['device'])
     # Log the number of learnable parameters
     logger.info(f'Number of learnable params {get_number_of_learnable_parameters(model)}')
@@ -135,7 +136,7 @@ def main():
                               loss_criterion=loss_criterion, eval_criterion=eval_criterion, loaders=loaders,
                               logger=logger)
     # Start training
-    trainer.fit()
+    trainer.val()
 
 
 if __name__ == '__main__':

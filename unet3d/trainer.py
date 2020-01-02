@@ -53,7 +53,7 @@ class UNet3DTrainer:
             self.logger = logger
 
         self.logger.info(model)
-        self.model = model
+        self.model = torch.nn.DataParallel(model).cuda()
         self.optimizer = optimizer
         self.scheduler = lr_scheduler
         self.loss_criterion = loss_criterion
@@ -148,6 +148,11 @@ class UNet3DTrainer:
                 break
 
             self.num_epoch += 1
+    
+    def val(self):
+        self.model.eval()
+        # evaluate on validation set
+        val_eval_score = self.validate(self.loaders['val'])
 
     def train(self, train_loader):
         """Trains the model for 1 epoch.
@@ -179,26 +184,41 @@ class UNet3DTrainer:
             loss.backward()
             self.optimizer.step()
 
-            if self.num_iterations % self.validate_after_iters == 0:
+            save_nib = False
+            if save_nib:
+                import nibabel as nib
+                import numpy as np
+                idx = np.random.randint(input.shape[0])
+                npimg = input.cpu().numpy()[idx,0,:,:,:]
+                npimg = npimg.transpose((2,1,0))
+                npimg = npimg * train_loader.dataset.datasets[0].transformer.config_base['std'] + npimg * train_loader.dataset.datasets[0].transformer.config_base['mean']
+                nplbl = target.cpu().numpy()[idx,0,:,:,:]
+                nplbl = nplbl.transpose((2,1,0))
+                nbimg = nib.Nifti1Image(npimg, np.eye(4))
+                nblbl = nib.Nifti1Image(nplbl, np.eye(4))
+                nib.save(nbimg, 'vis/vol-%04d.nii' % (i))
+                nib.save(nblbl, 'vis/gth-%04d.nii' % (i))
+
+            '''if self.num_iterations % self.validate_after_iters == 0:
                 # set the model in eval mode
                 self.model.eval()
                 # evaluate on validation set
-                eval_score = self.validate(self.loaders['val'])
+                val_eval_score = self.validate(self.loaders['val'])
                 # set the model back to training mode
                 self.model.train()
 
                 # adjust learning rate if necessary
                 if isinstance(self.scheduler, ReduceLROnPlateau):
-                    self.scheduler.step(eval_score)
+                    self.scheduler.step(val_eval_score)
                 else:
                     self.scheduler.step()
                 # log current learning rate in tensorboard
                 self._log_lr()
                 # remember best validation metric
-                is_best = self._is_best_eval_score(eval_score)
+                is_best = self._is_best_eval_score(val_eval_score)
 
                 # save checkpoint
-                self._save_checkpoint(is_best)
+                self._save_checkpoint(is_best)'''
 
             if self.num_iterations % self.log_after_iters == 0:
                 # if model contains final_activation layer for normalizing logits apply it, otherwise both
@@ -224,6 +244,28 @@ class UNet3DTrainer:
                 return True
 
             self.num_iterations += 1
+        
+        # set the model in eval mode
+        self.model.eval()
+        # evaluate on validation set
+        val_eval_score = self.validate(self.loaders['val'])
+        # set the model back to training mode
+        self.model.train()
+
+        # adjust learning rate if necessary
+        if isinstance(self.scheduler, ReduceLROnPlateau):
+            self.scheduler.step(val_eval_score)
+        else:
+            self.scheduler.step()
+        # log current learning rate in tensorboard
+        self._log_lr()
+        # remember best validation metric
+        is_best = self._is_best_eval_score(val_eval_score)
+
+        # save checkpoint
+        self._save_checkpoint(is_best)
+        torch.save(self.model.module.cpu().state_dict(), os.path.join(self.checkpoint_dir, 'epoch-%03d-%.3f.pth' % (self.num_epoch, val_eval_score)))
+        self.model.cuda()
 
         return False
 
@@ -253,7 +295,29 @@ class UNet3DTrainer:
                 if self.validate_iters is not None and self.validate_iters <= i:
                     # stop validation
                     break
+                
+                save_nib = False
+                if save_nib:
+                    import nibabel as nib
+                    import numpy as np
+                    #idx = np.random.randint(input.shape[0])
+                    for idx in range(input.shape[0]):
+                        npimg = input.cpu().numpy()[idx,0,:,:,:]
+                        npimg = npimg.transpose((2,1,0))
+                        npimg = npimg * val_loader.dataset.datasets[0].transformer.config_base['std'] + npimg * val_loader.dataset.datasets[0].transformer.config_base['mean']
+                        nplbl = target.cpu().numpy()[idx,0,:,:,:]
+                        nplbl = nplbl.transpose((2,1,0))
+                        npprd = output.cpu().numpy()[idx,0,:,:,:]
+                        npprd = npprd.transpose((2,1,0))
+                        npprd = (npprd > 0.5).astype(np.uint8)
+                        nbimg = nib.Nifti1Image(npimg, np.eye(4))
+                        nblbl = nib.Nifti1Image(nplbl, np.eye(4))
+                        nbprd = nib.Nifti1Image(npprd, np.eye(4))
+                        nib.save(nbimg, 'val/vol-%03d-%02d.nii' % (i, idx))
+                        nib.save(nblbl, 'val/gth-%03d-%02d.nii' % (i, idx))
+                        nib.save(nbprd, 'val/prd-%03d-%02d.nii' % (i, idx))
 
+                torch.cuda.empty_cache()
             self._log_stats('val', val_losses.avg, val_scores.avg)
             self.logger.info(f'Validation finished. Loss: {val_losses.avg}. Evaluation score: {val_scores.avg}')
             return val_scores.avg
